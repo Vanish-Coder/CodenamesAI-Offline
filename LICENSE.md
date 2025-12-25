@@ -1,6 +1,4 @@
-# PolyForm Noncommercial License 1.0.0
-
-Link to license: <https://polyformproject.org/licenses/noncommercial/1.0.0>
+# PolyForm Noncommercial License 1.0.0 (Slightly Modified)
 
 ## Acceptance
 
@@ -31,6 +29,7 @@ The licensor grants you a patent license for the software that covers patent cla
 ## Noncommercial Purposes
 
 Any noncommercial purpose is a permitted purpose.
+No commercial use of the software is permitted. This prohibition applies to all uses of the software, including but not limited to playing, modifying, distributing, monetizing, bundling, or incorporating the software or any modified versions into products or services.
 
 ## Personal Uses
 
