@@ -1,177 +1,152 @@
-#This is not necessarily AI in the sense of ChatGPT/Gemini. Rather it uses Sentence Transformers (https://sbert.net/), which creates mathemtical vector representations
-#of all the words. It then runs a bunch of mathmetical calclations determiend by a LLM (specifically a NLP) and returns a bunch of best matches for the specific usecase.
-#Also the hint will always comes from a set of potential clues stored in candidate_clues, so in that sense it does have limits.
-
 import json
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import random
+import math
 
-# Set seed based on current time for variation
 np.random.seed(None)
 random.seed(None)
 
 # -----------------------------
-# 1. Load the AI model
+# 1. Load model
 # -----------------------------
-model = SentenceTransformer("all-MiniLM-L6-v2")  # free, fast
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # -----------------------------
-# 2. Read the board from state.json
+# 2. Load game state
 # -----------------------------
 with open("state.json", "r") as f:
     board = json.load(f)
+
+current_team = board.get("team", "RED")
+risk_mode = board.get("risk", "NORMAL").upper()
 
 red_words = [w.upper() for w in board.get("red_words", [])]
 blue_words = [w.upper() for w in board.get("blue_words", [])]
 neutral_words = [w.upper() for w in board.get("neutral_words", [])]
 assassin = board.get("assassin", "").upper()
-revealed_words = set([w.upper() for w in board.get("revealed", [])])
+revealed_words = set(w.upper() for w in board.get("revealed", []))
 
-# Filter out already revealed words from red_words
 red_words = [w for w in red_words if w not in revealed_words]
 blue_words = [w for w in blue_words if w not in revealed_words]
 neutral_words = [w for w in neutral_words if w not in revealed_words]
-
-# If assassin is revealed, don't include it in the penalty
 assassin_unrevealed = assassin not in revealed_words
 
-# Encode words into vectors
-red_vecs = model.encode(red_words) if red_words else np.array([])
-blue_vecs = model.encode(blue_words) if blue_words else np.array([])
-neutral_vecs = model.encode(neutral_words) if neutral_words else np.array([])
-assassin_vec = model.encode([assassin])[0] if assassin_unrevealed else np.zeros(384)
+# -----------------------------
+# 3. Team logic (FIXED)
+# -----------------------------
+if current_team == "BLUE":
+    target_words = blue_words
+    penalty_words = red_words
+else:
+    target_words = red_words
+    penalty_words = blue_words
 
-# If no red words left, game is over
-if len(red_words) == 0:
-    hint = {"clue": "GAME_OVER", "number": 0}
+if not target_words:
     with open("hint.json", "w") as f:
-        json.dump(hint, f)
+        json.dump({"clue": "GAME_OVER", "number": 0}, f)
     exit()
 
-# Add more diverse candidate clues
-# --------------------------------
-# 3. Large candidate hint database
-# --------------------------------
-candidate_clues = [
-    # Space / Science
-    "space", "celestial", "astronomy", "planet", "moon", "star", "galaxy", "universe", "sky", "cosmos", "orbit",
-    "asteroid", "comet", "meteor", "satellite", "blackhole", "nebula", "rocket", "telescope", "gravity", "wave",
-    
-    # Animals
-    "animal", "pet", "mammal", "bird", "fish", "insect", "reptile", "amphibian", "wild", "domestic",
-    "jungle", "farm", "oceanlife", "zoo", "predator", "prey", "feline", "canine", "aquatic", "flying",
-    
-    # Food
-    "fruit", "vegetable", "meat", "dairy", "snack", "drink", "dessert", "sweet", "spicy", "cereal",
-    "bread", "pizza", "pasta", "cake", "chocolate", "icecream", "soup", "salad", "coffee", "tea", "juice",
-    
-    # Objects
-    "tool", "furniture", "vehicle", "transport", "clothing", "electronics", "instrument", "book", "paper", "toy",
-    "weapon", "device", "appliance", "utensil", "machine", "phone", "computer", "keyboard", "pen", "pencil",
-    
-    # Nature
-    "nature", "plant", "tree", "flower", "forest", "river", "mountain", "ocean", "beach", "desert",
-    "weather", "sun", "rain", "storm", "snow", "wind", "cloud", "rock", "earth", "sky", "water",
-    
-    # Music / Art
-    "music", "instrument", "painting", "drawing", "song", "dance", "theater", "poem", "composer", "band",
-    "concert", "melody", "harmony", "lyric", "rhythm", "art", "sculpture", "canvas", "brush", "stage", "sound",
-    
-    # Misc / Concepts
-    "color", "number", "shape", "emotion", "job", "profession", "school", "holiday", "festival", "party",
-    "game", "sport", "competition", "travel", "city", "country", "history", "law", "politics", "technology",
-    "internet", "social", "computer", "science", "medicine", "spaceflight", "myth", "legend", "story", "fiction",
-    "time", "energy", "force", "light", "heat", "cold", "speed", "high", "low", "big", "small", "long", "short",
-    "wide", "narrow", "thick", "thin", "hard", "soft", "sharp", "dull", "bright", "dark", "clear", "cloudy",
-    "wet", "dry", "hot", "cool", "loud", "quiet", "fast", "heavy", "light", "strong", "weak", "smooth", "rough"
-]
+# -----------------------------
+# 4. Encode vectors
+# -----------------------------
+target_vecs = model.encode(target_words)
+penalty_vecs = model.encode(penalty_words) if penalty_words else []
+neutral_vecs = model.encode(neutral_words) if neutral_words else []
+assassin_vec = model.encode([assassin])[0] if assassin_unrevealed else None
 
 # -----------------------------
-# 3a. Remove candidate clues that exactly match any board word
+# 5. Candidate clues
 # -----------------------------
+candidate_clues = [
+    "space","planet","star","moon","animal","mammal","bird","fish","fruit","food",
+    "vehicle","tool","weapon","machine","computer","phone","music","art","painting",
+    "science","nature","forest","ocean","river","mountain","weather","storm","snow",
+    "emotion","job","school","sport","game","travel","city","history","myth","legend",
+    "energy","force","light","dark","heat","cold","speed","power","sound","shape",
+    "object","material","metal","wood","stone","glass"
+]
+
+# Remove board words
 all_board_words = set(red_words + blue_words + neutral_words + ([assassin] if assassin_unrevealed else []))
 candidate_clues = [c for c in candidate_clues if c.upper() not in all_board_words]
 
 candidate_vecs = model.encode(candidate_clues)
 
 # -----------------------------
-# 4. Cosine similarity
+# 6. Utilities
 # -----------------------------
-def cosine_similarity(a, b):
+def cosine(a, b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
-# -----------------------------
-# 5. Improved scoring function for more literal connections
-# -----------------------------
-def score_clue(clue_vec):
-    # Similarity to RED words (only unrevealed)
-    similarities = [cosine_similarity(clue_vec, rv) for rv in red_vecs] if len(red_vecs) > 0 else []
-    red_score = sum(similarities)
-    
-    # Reward clues that connect multiple RED words
-    multi_word_bonus = sum(1 for sim in similarities if sim > 0.5) * 0.5  # +0.5 for each strong connection
-    
-    # Similarity to "bad" words (BLUE + NEUTRAL + ASSASSIN, unrevealed only)
-    bad_vecs = list(blue_vecs) + list(neutral_vecs) + ([assassin_vec] if assassin_unrevealed else [])
-    penalty = np.mean([cosine_similarity(clue_vec, bv) for bv in bad_vecs]) if bad_vecs else 0
-    
-    # Final score
-    return red_score + multi_word_bonus - penalty
+def noun_bias(word):
+    # Simple heuristic: abstract verbs/adverbs often end with these
+    bad_suffixes = ("ly", "ing", "ed", "ness", "ful", "less")
+    return -0.2 if word.endswith(bad_suffixes) else 0.2
 
 # -----------------------------
-# 6. Pick the best clue
+# 7. Risk parameters
 # -----------------------------
-scores = [score_clue(cv) for cv in candidate_vecs]
-best_index = int(np.argmax(scores))
-best_clue_vec = candidate_vecs[best_index]
-best_clue = str(candidate_clues[best_index]).upper()
+RISK = {
+    "SAFE":       {"assassin_max": 0.30, "penalty_weight": 1.5, "threshold": 0.85},
+    "NORMAL":     {"assassin_max": 0.40, "penalty_weight": 1.0, "threshold": 0.80},
+    "AGGRESSIVE": {"assassin_max": 0.55, "penalty_weight": 0.7, "threshold": 0.72}
+}[risk_mode]
 
 # -----------------------------
-# 7. Determine number of words it safely connects (dynamic threshold)
+# 8. Scoring function
 # -----------------------------
-max_sim = max(cosine_similarity(best_clue_vec, rv) for rv in red_vecs) if len(red_vecs) > 0 else 0
-threshold = 0.8 * max_sim
-number = sum(1 for rv in red_vecs if cosine_similarity(best_clue_vec, rv) > threshold) if len(red_vecs) > 0 else 0
-number = int(number)
+def score_clue(clue, vec):
+    # Target reward
+    sims = [cosine(vec, tv) for tv in target_vecs]
+    target_score = sum(sims)
 
-# -----------------------------
-# 8. Prefer clues that connect >1 word
-# -----------------------------
-if number == 1 and len(red_vecs) > 1:
-    sorted_indices = np.argsort(scores)[::-1]  # descending order
-    for idx in sorted_indices:
-        vec = candidate_vecs[idx]
-        max_sim_tmp = max(cosine_similarity(vec, rv) for rv in red_vecs)
-        threshold_tmp = 0.8 * max_sim_tmp
-        num_tmp = sum(1 for rv in red_vecs if cosine_similarity(vec, rv) > threshold_tmp)
-        if num_tmp > 1:
-            best_index = idx
-            best_clue_vec = candidate_vecs[best_index]
-            best_clue = str(candidate_clues[best_index]).upper()
-            number = int(num_tmp)
-            break
+    # Multi-word bonus
+    multi_bonus = sum(1 for s in sims if s > 0.5) * 0.6
 
-# Ensure number is at least 1 for unrevealed words
-if number == 0 and len(red_vecs) > 0:
-    number = 1
+    # Penalties
+    bad_vecs = list(penalty_vecs) + list(neutral_vecs)
+    penalty = np.mean([cosine(vec, bv) for bv in bad_vecs]) if bad_vecs else 0
 
-# Pick from top 3 best clues for variation
-top_k = 3
-top_indices = np.argsort(scores)[::-1][:top_k]
-best_index = random.choice(top_indices)
-best_clue = str(candidate_clues[best_index]).upper()
+    # Assassin hard block
+    if assassin_vec is not None:
+        assassin_sim = cosine(vec, assassin_vec)
+        if assassin_sim > RISK["assassin_max"]:
+            return -999  # absolute veto
+    else:
+        assassin_sim = 0
 
-# Recalculate number for the selected clue
-best_clue_vec = candidate_vecs[best_index]
-max_sim = max(cosine_similarity(best_clue_vec, rv) for rv in red_vecs) if len(red_vecs) > 0 else 0
-threshold = 0.8 * max_sim
-number = sum(1 for rv in red_vecs if cosine_similarity(best_clue_vec, rv) > threshold) if len(red_vecs) > 0 else 0
-if number == 0 and len(red_vecs) > 0:
-    number = 1
+    return (
+        target_score
+        + multi_bonus
+        - penalty * RISK["penalty_weight"]
+        + noun_bias(clue)
+        - assassin_sim * 2
+    )
 
 # -----------------------------
-# 9. Write hint.json safely
+# 9. Rank clues
+# -----------------------------
+scores = [score_clue(c, v) for c, v in zip(candidate_clues, candidate_vecs)]
+sorted_indices = np.argsort(scores)[::-1]
+
+# Pick from top 3 for variety
+best_index = random.choice(sorted_indices[:3])
+best_clue = candidate_clues[best_index].upper()
+best_vec = candidate_vecs[best_index]
+
+# -----------------------------
+# 10. Dynamic number selection
+# -----------------------------
+sims = [cosine(best_vec, tv) for tv in target_vecs]
+max_sim = max(sims)
+threshold = RISK["threshold"] * max_sim
+
+number = sum(1 for s in sims if s > threshold)
+number = max(1, min(number, len(target_words)))
+
+# -----------------------------
+# 11. Output
 # -----------------------------
 hint = {
     "clue": best_clue,
@@ -181,5 +156,5 @@ hint = {
 with open("hint.json", "w") as f:
     json.dump(hint, f)
 
-# Print for debugging
-print(f"AI Hint: {best_clue} ({number}) - Unrevealed RED words: {red_words}")
+print(f"[{current_team} | {risk_mode}] AI Hint: {best_clue} ({number})")
+print("Targets:", target_words)
